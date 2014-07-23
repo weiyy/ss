@@ -1,26 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
+
 #include <errno.h>
 #include <string.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <sys/epoll.h>
 #include <sys/time.h>
-#include <sys/resource.h>
-#include <dirent.h>
-#include <sys/stat.h>
- 
-#include "mysql/mysql.h"
-#include "mysql/errmsg.h"
-#include <map>
-#include <set>
-#include <vector>
-#include <math.h>
+
 #include "func.h"
 #include "MemPool.h"
 #include "RB_tree.h"
@@ -312,18 +294,6 @@ char *mem_pool_dup_str(CMemPool *mem_pool, char *s){
 	memcpy(p, s, n+1);
 
 	return p;
-}
-
-char *mem_pool_mysql_escape_string(CMemPool *mem_pool, char *s){
-	if (!s){
-		char *p = (char *)mem_pool->Alloc(1);
-		*p = '\0';
-		return p;
-	}
-	int n = strlen(s);
-	char *es = (char *)mem_pool->Alloc(n*2+1);
-	mysql_escape_string(es, s, n);
-	return es;
 }
 
 char *replace_strchar(char *pInput, int length, char pSrc, char pDst){
@@ -864,10 +834,10 @@ int response_null(char *out_buffer, int out_n, int command, short error_code){
 #define UNPACK_STRING() \
 	us.unpack_string(); if (us.m_error_flag) { return -1; }
 
-int AppOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe);
+int AppOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe);
 int IosOutput(sphinx_result* res, int result_count, char* outbuff, int out_n);
-int RingOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe);
-int WallpaperOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe);
+int RingOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe);
+int WallpaperOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe);
 
 struct _search_input{
 	
@@ -891,6 +861,7 @@ struct _search_input{
 	const char * sort;
 	const char * order;
 	const char * indexer;
+	
 	int order_num;
 	
 	const char * bundleid;
@@ -982,10 +953,6 @@ int GetIutput(char* input, int len, int command, _search_input& ssp){
 	if(!value->isNull() && value->isInt())
 		ssp.order_num = value->asInt();
 		
-	value = requestroot["indexer"];
-	if(!value->isNull() && value->isString())
-		ssp.indexer = value->asString();
-				
 	value = requestroot["stars"];
 	if(!value->isNull() && value->isInt())
 		//char tmpstars[8] = {0};
@@ -1007,6 +974,10 @@ int GetIutput(char* input, int len, int command, _search_input& ssp){
 	value = requestroot["order"];
 	if(!value->isNull() && value->isString())
 		ssp.order = value->asString();
+		
+	value = requestroot["indexer"];
+	if(!value->isNull() && value->isString())
+		ssp.indexer = value->asString();
 								
 	value = requestroot["BundleId"];
 	if(!value->isNull() && value->isString())
@@ -1064,7 +1035,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 			if (GetIutput(data, tcpdata->len-8, tcpdata->command, ssp) < 0)
 				return RESPONSE_ERROR(IH_ACK_SEARCH_APPS, IH_E_INVALID_REQUEST);	
 				
-			if(ssp.search_key == NULL){
+			if(ssp.search_key == NULL ){
 				save_log(INFO, "no keyword, search what app? !\n");				
 				return RESPONSE_NULL(IH_ACK_SEARCH_SHARE_APPS, IH_E_OK);
 			}
@@ -1139,12 +1110,11 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				
 			bool isCahe = false;
 			_RB_tree_node<char*, SEARCH_CACHE*> * cache_node = g_apple_app_search_cache_tree->find(cache_key);
-			if (cache_node == g_apple_app_search_cache_tree->nil())
+			//if (cache_node == g_apple_app_search_cache_tree->nil())
 			{
-				//sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "(sum(lcs*user_weight)*1000 + bm25)*1000 + sortlevel");
-	  //sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "sum(lcs*user_weight)");
-		sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "downloads");
-		//				sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "sum(lcs*user_weight)*pow(2,48) + sortlevel*pow(2,40) + downloads");
+				sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "downloads");
+				//sphinx_set_ranking_mode(client, SPH_RANK_EXPR, "sum(lcs*user_weight)*pow(2,48) + sortlevel*pow(2,40) + downloads");
+				//sphinx_set_ranking_mode(client, SPH_RANK_SPH04, NULL);
 				if (ssp.tagids_num > 0 && ssp.tagids != NULL){
 					sphinx_int64_t t[10] = {0};
 					char *pt = (char*) ssp.tagids;
@@ -1172,7 +1142,6 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				if (ssp.catid > 0)
 					sphinx_add_filter(client, "catid", 1, &(ssp.catid), SPH_FALSE);
 				
-				//save_log(INFO, "ssp.stars:%f\n", ssp.stars);
 				if (ssp.stars > 0.0){
 					sphinx_add_filter_float_range(client, "stars", (float)((ssp.stars - 1.0)*2.0), 10.0, SPH_FALSE);
 				}
@@ -1187,10 +1156,21 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 					save_log(INFO, "app: order:%s\n", ssp.order);
 					sphinx_set_sort_mode(client, SPH_SORT_EXTENDED, ssp.order);
 				}
+				else{
+					sphinx_set_sort_mode(client, SPH_SORT_EXTENDED, "@weight DESC updatetime DESC");	
+				}
 				//sphinx_add_filter(client, "status", 1, &(ssp.status), SPH_FALSE);
 				//sphinx_add_filter(client, "display", 1, &(ssp.display), SPH_FALSE);
 				//sphinx_set_match_mode(client, SPH_MATCH_FULLSCAN);
-				
+			const char * field_names[2];
+			int field_weights[2];
+		
+			field_names[0] = "title";
+			field_names[1] = "keywords";
+			field_weights[0] = 2;
+			field_weights[1] = 0;
+			sphinx_set_field_weights ( client, 2, field_names, field_weights );
+			
 				save_log(INFO, "app keyword:%s\n", ssp.search_key);
 				res = sphinx_query (client, ssp.search_key, "iapp", NULL);
 				if (NULL == res){
@@ -1200,12 +1180,9 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 					return RESPONSE_NULL(IH_ACK_SEARCH_APPS, IH_E_OK);	
 				}else if (0 == res->num_matches){
 					g_data_locker.Unlock();
-					save_log(INFO, "app num_matches:%d\n", res->num_matches);
+					save_log(INFO, "app num_matches:%d  error:%s!\n", res->num_matches, sphinx_error(client));
 					return RESPONSE_NULL(IH_ACK_SEARCH_APPS, IH_E_OK);	
 				}
-/////////////////
-
-//////////////////
 
 				//add to cache
 				SEARCH_LIST *temp_sl = (SEARCH_LIST*)g_db_mem_pool->Alloc(sizeof(SEARCH_LIST));
@@ -1230,7 +1207,10 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				
 				sc->search_type = 1;
 				g_search_cache_lru.AddTail(sc);
+				
+				result_count = res->num_matches;
 			}
+/*			
 			else{
 				cache_node->value()->last_visit_time = TIME_NOW;
 				result_count = cache_node->value()->count;
@@ -1243,7 +1223,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 					result_list = result_list->next;
 				}
 				
-				if (NULL == result_list || 0 == result_count){
+				if (NULL == result_list || result_count - ssp.page*ssp.page_count <=0){
 					save_log(INFO, "app, get null list from cache!\n");
 					return RESPONSE_NULL(IH_ACK_SEARCH_APPS, IH_E_OK);	
 				}
@@ -1252,7 +1232,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				
 				sphinx_int64_t filte_id[30];
 				int num = 0;
-				for (int i = 0; i < ssp.page_count && i < result_count; ++i){
+				for (int i = 0; i < ssp.page_count && i < (result_count - ssp.page*ssp.page_count); ++i){
 					filte_id[i] = result_list->index;
 					++num;
 					//sphinx_set_id_range(client, result_list->index, result_list->index);
@@ -1281,9 +1261,9 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				isCahe = true;
 
 			}//else
-		
+*/		
 			//if (!isCahe)
-				res_len = AppOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
+				res_len = AppOutput(res, res->num_matches, result_count, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
 			//else
 			//	res_len = AssembleOutput(res, sphinx_get_num_results(client), 0, 10, outbuff, out_n, isCahe);
 
@@ -1441,6 +1421,8 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				save_log(INFO, "ring:search:%s, result: %d\n", ssp.search_key, res->num_matches);
 
 				g_search_cache_lru.AddTail(sc);
+				
+				result_count = res->num_matches;
 			}
 			else{
 				cache_node->value()->last_visit_time = TIME_NOW;
@@ -1452,8 +1434,9 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				for (int i = 0; i < ssp.page*ssp.page_count && i < result_count; ++i){
 					result_list = result_list->next;
 				}
+				result_count -= ssp.page*ssp.page_count;
 				
-				if (NULL == result_list || 0 == result_count){
+				if (NULL == result_list || result_count - ssp.page*ssp.page_count <= 0){
 					g_data_locker.Unlock();
 					save_log(INFO, "ring:get null list from cache!\n");
 					return RESPONSE_NULL(IH_ACK_SEARCH_RINGS, IH_E_OK);	
@@ -1463,7 +1446,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				
 				sphinx_int64_t filte_id[30];
 				int num = 0;
-				for (int i = 0; i < ssp.page_count && i < result_count; ++i){
+				for (int i = 0; i < ssp.page_count && i < (result_count - ssp.page*ssp.page_count); ++i){
 					filte_id[i] = result_list->index;
 					++num;
 					result_list = result_list->next;
@@ -1491,7 +1474,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 
 			}//else
 		
-			res_len = RingOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
+			res_len = RingOutput(res, res->num_matches, result_count, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
 
 			g_data_locker.Unlock();
 			
@@ -1598,6 +1581,8 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				save_log(INFO, "wallpaper:search:%s, result: %d\n", ssp.search_key, res->num_matches);
 
 				g_search_cache_lru.AddTail(sc);
+
+				result_count = res->num_matches;
 			}
 			else{
 				cache_node->value()->last_visit_time = TIME_NOW;
@@ -1609,8 +1594,9 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				for (int i = 0; i < ssp.page*ssp.page_count && i < result_count; ++i){
 					result_list = result_list->next;
 				}
+				result_count -= ssp.page*ssp.page_count;
 				
-				if (NULL == result_list || 0 == result_count){
+				if (NULL == result_list || result_count - ssp.page*ssp.page_count <= 0){
 					g_data_locker.Unlock();
 					save_log(INFO, "wallpaper:get null list from cache!\n");
 					return RESPONSE_NULL(IH_ACK_SEARCH_WALLPAPERS, IH_E_OK);	
@@ -1620,7 +1606,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				
 				sphinx_int64_t filte_id[30];
 				int num = 0;
-				for (int i = 0; i < ssp.page_count && i < result_count; ++i){
+				for (int i = 0; i < ssp.page_count && i < (result_count - ssp.page*ssp.page_count); ++i){
 					filte_id[i] = result_list->index;
 					++num;
 					result_list = result_list->next;
@@ -1647,7 +1633,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 
 			}//else
 		
-			res_len = WallpaperOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
+			res_len = WallpaperOutput(res, res->num_matches, result_count, ssp.page, ssp.page_count, outbuff, out_n, isCahe);
 
 			g_data_locker.Unlock();
 			
@@ -1722,13 +1708,13 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 				save_log(INFO, "indexer num_matches:%d\n", res->num_matches);
 				return RESPONSE_NULL(IH_ACK_SEARCH_APPS, IH_E_OK);	
 			}
-				
+			
 			if (0 == strcmp(ssp.indexer, "iapp"))
-				res_len = AppOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
+				res_len = AppOutput(res, res->num_matches, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
 			else if (0 == strcmp(ssp.indexer, "iring"))
-				res_len = RingOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
+				res_len = RingOutput(res, res->num_matches, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
 			else if (0 == strcmp(ssp.indexer, "iwallpaper"))
-				res_len = WallpaperOutput(res, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
+				res_len = WallpaperOutput(res, res->num_matches, res->num_matches, ssp.page, ssp.page_count, outbuff, out_n, false);
 			else if (0 == strcmp(ssp.indexer, "iosapp"))
 				res_len = IosOutput(res, res->num_matches, outbuff, out_n);
 				
@@ -1737,9 +1723,8 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 		//清缓存
 		case 261025:{
 			g_data_locker.Lock();
-
+			
 			save_log(INFO, "begin to clear the cache!\n");
-						
 			if (g_db_mem_pool){
 				delete g_db_mem_pool;
 				g_db_mem_pool = NULL;
@@ -1782,7 +1767,7 @@ int HandlePacket(uint32_t client_ip, char * packet, int packet_len, char * outbu
 	return res_len;
 }
 
-int WallpaperOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe){
+int WallpaperOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe){
 
 	int result_pages = (result_count / page_count) + (result_count % page_count == 0 ? 0 : 1);
 	
@@ -1800,7 +1785,7 @@ int WallpaperOutput(sphinx_result* res, int result_count, int page, int page_cou
 	sprintf(cuint32, "%u", result_pages);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"searchCount\":");
-	sprintf(cuint32, "%u", result_count);
+	sprintf(cuint32, "%u", total);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"content\":[");
 	
@@ -1849,7 +1834,7 @@ int WallpaperOutput(sphinx_result* res, int result_count, int page, int page_cou
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 8));
 
 		ps.pack_jsonstr("\",\"updatetime\":");
-		sprintf(cuint32, "%ul", sphinx_get_int(res, r, 9));
+		sprintf(cuint32, "%u", sphinx_get_int(res, r, 9));
 		ps.pack_jsonstr(cuint32);
 		
 		ps.pack_jsonstr("}");
@@ -1868,7 +1853,7 @@ int WallpaperOutput(sphinx_result* res, int result_count, int page, int page_cou
 	return n;
 }
 
-int RingOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe){
+int RingOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe){
 
 	int result_pages = (result_count / page_count) + (result_count % page_count == 0 ? 0 : 1);
 	
@@ -1886,7 +1871,7 @@ int RingOutput(sphinx_result* res, int result_count, int page, int page_count, c
 	sprintf(cuint32, "%u", result_pages);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"searchCount\":");
-	sprintf(cuint32, "%u", result_count);
+	sprintf(cuint32, "%u", total);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"content\":[");
 	
@@ -1925,7 +1910,7 @@ int RingOutput(sphinx_result* res, int result_count, int page, int page_count, c
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 4));
 
 		ps.pack_jsonstr("\",\"updatetime\":");
-		sprintf(cuint32, "%ul", sphinx_get_int(res, r, 5));
+		sprintf(cuint32, "%u", sphinx_get_int(res, r, 5));
 		ps.pack_jsonstr(cuint32);
 		
 		ps.pack_jsonstr("}");
@@ -1988,7 +1973,7 @@ int IosOutput(sphinx_result* res, int result_count, char* outbuff, int out_n){
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 2));
 	
 		ps.pack_jsonstr("\",\"last_audit\":");
-		sprintf(cuint32, "%ul", sphinx_get_int(res, r, 3));
+		sprintf(cuint32, "%u", sphinx_get_int(res, r, 3));
 		ps.pack_jsonstr(cuint32);
 
 //appstore_share_hits:				
@@ -2008,7 +1993,7 @@ int IosOutput(sphinx_result* res, int result_count, char* outbuff, int out_n){
 	return n;
 }
 
-int AppOutput(sphinx_result* res, int result_count, int page, int page_count, char* outbuff, int out_n, bool isCahe){
+int AppOutput(sphinx_result* res, int result_count, int total, int page, int page_count, char* outbuff, int out_n, bool isCahe){
 	/*
 		uint32		len;
 		uint32		command;
@@ -2037,7 +2022,7 @@ int AppOutput(sphinx_result* res, int result_count, int page, int page_count, ch
 	sprintf(cuint32, "%u", result_pages);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"searchCount\":");
-	sprintf(cuint32, "%u", result_count);
+	sprintf(cuint32, "%u", total);
 	ps.pack_jsonstr(cuint32);
 	ps.pack_jsonstr(",\"content\":[");
 	
@@ -2058,8 +2043,7 @@ int AppOutput(sphinx_result* res, int result_count, int page, int page_count, ch
 		else
 			ps.pack_jsonstr(",{");
 
-//	save_log(INFO, "pid:%d, tag:%s, stars:%lf\n", sphinx_get_int (res, r, 3), sphinx_get_int(res, r, 0), sphinx_get_float(res, r, 2));
-		printf ( "%d. doc_id=%d, weight=%ld\n", 1+r, (int)sphinx_get_id ( res, r ), sphinx_get_weight ( res, r ) );
+	save_log(INFO, "id:%d, weight:%ld, title:%s downloads:%u\n", sphinx_get_id (res, r), sphinx_get_weight(res, r), sphinx_get_string(res, r, 9), sphinx_get_int(res, r, 34));
 //v9_download:
 		ps.pack_jsonstr("\"Id\":");
 		sprintf(cuint32, "%u", sphinx_get_id (res, r));
@@ -2145,27 +2129,27 @@ int AppOutput(sphinx_result* res, int result_count, int page, int page_count, ch
 		ps.pack_jsonstr(cuint32);
 		
 		ps.pack_jsonstr(",\"updatetime\":");
-		sprintf(cuint32, "%ul", sphinx_get_int(res, r, 12));
+		sprintf(cuint32, "%u", sphinx_get_int(res, r, 12));
 		ps.pack_jsonstr(cuint32);
 
 		ps.pack_jsonstr(",\"inputtime\":");
-		sprintf(cuint32, "%ul", sphinx_get_int(res, r, 13));
+		sprintf(cuint32, "%u", sphinx_get_int(res, r, 13));
 		ps.pack_jsonstr(cuint32);
 
 //v9_download_data:
 		ps.pack_jsonstr(",\"content\":\"");
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 28));
 		
-		ps.pack_jsonstr(",\"soft_imgs\":\"");
+		ps.pack_jsonstr("\",\"soft_imgs\":\"");
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 29));
 		
-		ps.pack_jsonstr(",\"ipad_imgs\":\"");
+		ps.pack_jsonstr("\",\"ipad_imgs\":\"");
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 30));
 		
-		ps.pack_jsonstr(",\"relatedsoftware\":\"");
+		ps.pack_jsonstr("\",\"relatedsoftware\":\"");
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 31));
 		
-		ps.pack_jsonstr(",\"relation\":\"");
+		ps.pack_jsonstr("\",\"relation\":\"");
 		ps.pack_quotedjsonstr(sphinx_get_string(res, r, 32));	
 
 //v9_hits:
@@ -2398,7 +2382,6 @@ void* timer_thread(void*){
 		sleep(1);	
 		++g_time_tick;
 
-/*
 		//printf("in logic:%ld\n",  Conf::Instance()->GetSystemInfo().indextime);
 		if (g_time_tick % Conf::Instance()->GetSysInfo().indextime == 0){//20分钟
 			char cmd[] = "/usr/local/sphinx-for-chinese/bin/indexer --all --rotate";
@@ -2444,7 +2427,7 @@ void* timer_thread(void*){
 			g_data_locker.Unlock();
 		
 		}//if 20
-*/				
+				
 		if(g_time_tick % 300 == 0){
 			g_search_all_count += g_search_app_count;
 			g_search_all_count += g_search_wallpaper_count;

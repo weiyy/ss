@@ -41,7 +41,7 @@ Conf::LoadConf(const string& conffile)
     m_sysinfo.port = conf.ReadInteger("system", "port", 61020);
     m_sysinfo.indextime = conf.ReadInteger("system", "indextime", 20) * 60;
 
-    Print();
+    //Print();
     return 0;
 }
 

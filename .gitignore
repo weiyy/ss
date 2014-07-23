@@ -1,0 +1,7 @@
+*.[oa]
+*.~
+*.conf
+*bak
+*.log
+Makefile
+search_server

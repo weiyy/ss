@@ -8,6 +8,7 @@
 #include <fstream>
 #include <algorithm>
 #include <ctype.h>
+#include <iostream>
 
 
 string& toLower(string& s) {
@@ -51,10 +52,10 @@ ConfigFile::ReadSection(const string& sSection, list< string > &strList) const
 	while(!fs.eof())
 	{
 	    //fs >> line;
-		getline(fs, line);
+		getline(fs, line);	
 		Trim(line);
-        if(IsShieldLine(line))
-            continue;
+    if(IsShieldLine(line))
+    	continue;
 		if(line.length() > 2)
 		{
 			//Èç¹ûÊÇsection
@@ -70,7 +71,7 @@ ConfigFile::ReadSection(const string& sSection, list< string > &strList) const
 				if(!IsShieldLine(line))
 				{
 					strList.push_back(line);
-			    }
+			  }
 			}
 		}
 	}
@@ -80,13 +81,15 @@ ConfigFile::ReadSection(const string& sSection, list< string > &strList) const
 string 
 ConfigFile::ReadString(const string& sSection, const string& sIdent, const string &sDefault) const
 {	
+	
+	//std::cout << "sSection: " << sSection << "sIdent: " << sIdent << std::endl;
 	list< string > strList;
 	int nPos;
 	ReadSection(sSection, strList);
 	list< string >::iterator iter = strList.begin();
 	for ( ; iter != strList.end(); iter++ )
 	{
-	    string str = *iter;
+	  string str = *iter;
 		nPos = str.find(sIdent.c_str());
 		if(nPos != -1)
 		{
@@ -333,9 +336,17 @@ ConfigFile::Trim(string& str) const
 	if ( str.length() > 0 && (str[str.length() - 1] == 0X0D || str[str.length() - 1] == 0X0A) )
 	{
 	    str.erase(str.length() - 1);
-    }
+  }
 	string::iterator Iter;
-	Iter = remove(str.begin(), str.end(), ' ');
+	Iter = remove(str.begin(), str.end(), '	');//tab
+
+	if(Iter != str.end())
+	{
+		str.erase(Iter, str.end());
+	}
+
+	Iter = remove(str.begin(), str.end(), ' ');//space
+
 	if(Iter != str.end())
 	{
 		str.erase(Iter, str.end());

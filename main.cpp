@@ -125,7 +125,7 @@ int TCPSendHugePacket(GATESERVERCONNECTION * gsc, int client_sock, int session_i
 		
 		SWAPOUTBUFFER * sb = (SWAPOUTBUFFER*)g_mempool_for_gateservermap->Alloc(sizeof(SWAPOUTBUFFER));
 		
-				save_log(INFO, "gateservermapAllocsb\n");
+				//save_log(INFO, "gateservermapAllocsb\n");
 		sb->next = NULL;
 		
 		//len
@@ -206,7 +206,7 @@ void* data_swapout_thread(void* nparam){
 		int sent_bytes = TCPSend(sockfd, (char*)sb, send_len);
 		
 		g_mempool_for_gateservermap->Free(sb);
-		save_log(INFO, "gateservermapFreesb\n");
+		//save_log(INFO, "gateservermapFreesb\n");
 		if (sent_bytes != send_len){
 		  break;
 		}
@@ -220,7 +220,7 @@ void* data_swapout_thread(void* nparam){
 		gsc->first = sb->next;
 		
 		g_mempool_for_gateservermap->Free(sb);
-		save_log(INFO, "gateservermapFreesb\n");
+		//save_log(INFO, "gateservermapFreesb\n");
 	}
 	gsc->event.Unlock();
 	
@@ -230,7 +230,7 @@ void* data_swapout_thread(void* nparam){
 		g_gateservermap_locker.Lock();
 		g_mempool_for_gateservermap->Free(gsc);
 		g_gateserver_map->remove(gateserver_connection_id);
-		save_log(INFO, "gateservermapFree gsc \n");
+		//save_log(INFO, "gateservermapFree gsc \n");
 		g_gateservermap_locker.Unlock();	
 		
 	return NULL;
